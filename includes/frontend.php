@@ -46,43 +46,65 @@ add_action( 'wp_footer', function () {
 });
 
 /**
- * Auto-block tracking scripts (GA, FB, Hotjar, etc.)
+ * Log detected tracking scripts.
  */
-add_filter('script_loader_tag', function ($tag, $handle, $src) {
+function ccfw_log_detected_script( $src, $category ) {
 
-    // ignoruj admin, ajax, REST
-    if (is_admin() || wp_doing_ajax() || wp_is_json_request()) {
+    $detected = get_option( 'ccfw_detected_scripts', [] );
+
+    if ( ! is_array( $detected ) ) {
+        $detected = [];
+    }
+
+    if ( count( $detected ) > 50 ) {
+        array_shift( $detected );
+    }
+
+    $detected[ md5( $src ) ] = [
+        'src'      => esc_url_raw( $src ),
+        'category' => sanitize_text_field( $category ),
+        'time'     => current_time( 'mysql' ),
+    ];
+
+    update_option( 'ccfw_detected_scripts', $detected, false );
+}
+
+/**
+ * Auto-block tracking scripts loaded via wp_enqueue_script().
+ */
+add_filter( 'script_loader_tag', function ( $tag, $handle, $src ) {
+
+    if ( is_admin() || wp_doing_ajax() || wp_is_json_request() ) {
         return $tag;
     }
 
-    // definuj patterns
     $blocked = [
         'googletagmanager.com' => 'analytics',
         'google-analytics.com' => 'analytics',
-        'gtag/js' => 'analytics',
-
+        'gtag/js'              => 'analytics',
         'connect.facebook.net' => 'marketing',
-        'fbq(' => 'marketing',
-
-        'clarity.ms' => 'analytics',
-        'hotjar.com' => 'analytics',
+        'clarity.ms'           => 'analytics',
+        'hotjar.com'           => 'analytics',
     ];
 
-    foreach ($blocked as $needle => $category) {
+    foreach ( $blocked as $needle => $category ) {
+        if ( stripos( $src, $needle ) !== false ) {
 
-        if (stripos($src, $needle) !== false) {
+            ccfw_log_detected_script( $src, $category );
 
             return sprintf(
                 '<script type="text/plain" data-ccfw-category="%s" data-ccfw-original-src="%s"></script>',
-                esc_attr($category),
-                esc_url($src)
+                esc_attr( $category ),
+                esc_url( $src )
             );
         }
     }
 
     return $tag;
 
-}, 10, 3);
+}, 10, 3 );
 
-add_filter('woocommerce_enable_order_attribution', '__return_false');
-
+/**
+ * Disable WooCommerce Order Attribution / Sourcebuster cookies.
+ */
+add_filter( 'woocommerce_enable_order_attribution', '__return_false' );
